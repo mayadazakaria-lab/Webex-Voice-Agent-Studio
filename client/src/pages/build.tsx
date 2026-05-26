@@ -560,7 +560,27 @@ export default function Build() {
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [language, setLanguage] = useState("en-US");
   const [gender, setGender] = useState("neutral");
-  
+  const [disabledIntegrations, setDisabledIntegrations] = useState<string[]>([]);
+
+  // Map an integration display name to its canonical backend ID
+  const integrationNameToId = (name: string): string => {
+    const n = name.toLowerCase();
+    if (n.includes("webex")) return "webex";
+    if (n.includes("retail")) return "retail_db";
+    return n.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  };
+
+  // Update disabledIntegrations locally and persist to backend if the agent already exists
+  const updateDisabledIntegrations = (next: string[]) => {
+    setDisabledIntegrations(next);
+    const id = savedAgentId ?? (urlAgentId ? Number(urlAgentId) : null);
+    if (id) {
+      agentsApi.update(id, { disabledIntegrations: next }).catch(() => {
+        // non-fatal: local state still reflects user intent; backend will sync on Create/Save
+      });
+    }
+  };
+
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -650,6 +670,7 @@ export default function Build() {
       setSelectedVoice(existingAgent.voiceModel);
       setLanguage(existingAgent.language);
       setGender(existingAgent.gender || "neutral");
+      setDisabledIntegrations(existingAgent.disabledIntegrations || []);
     }
   }, [existingAgent]);
 
@@ -740,6 +761,7 @@ export default function Build() {
       voiceModel: selectedVoice,
       language,
       gender,
+      disabledIntegrations,
     });
     setSavedAgentId(agent.id);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -805,6 +827,7 @@ export default function Build() {
       voiceModel: selectedVoice,
       language,
       gender,
+      disabledIntegrations,
     });
   };
 
@@ -1033,6 +1056,7 @@ export default function Build() {
         voiceModel: selectedVoice,
         language,
         gender,
+        disabledIntegrations,
       });
 
       // Copy the Retail DB KB item to the new agent
@@ -1337,17 +1361,42 @@ export default function Build() {
 
                           {sparkActiveIntegrations.length > 0 && (
                             <div className="space-y-1.5">
-                              <p className="text-[10px] uppercase tracking-wider text-emerald-400/80">Connected</p>
+                              <p className="text-[10px] uppercase tracking-wider text-emerald-400/80">Connected <span className="text-muted-foreground/60 normal-case tracking-normal">— tap × to remove</span></p>
                               <div className="flex flex-wrap gap-1.5">
-                                {sparkActiveIntegrations.map((name, i) => (
-                                  <span
-                                    key={i}
-                                    className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
-                                    data-testid={`spark-active-integration-${i}`}
-                                  >
-                                    <Check className="w-3 h-3" /> {name}
-                                  </span>
-                                ))}
+                                {sparkActiveIntegrations
+                                  .filter(name => !disabledIntegrations.includes(integrationNameToId(name)))
+                                  .map((name, i) => {
+                                  const slug = integrationNameToId(name);
+                                  return (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center gap-1.5 text-xs pl-2.5 pr-1 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                                      data-testid={`spark-active-integration-${i}`}
+                                    >
+                                      <Check className="w-3 h-3" /> {name}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSparkActiveIntegrations(prev => prev.filter(p => p !== name));
+                                          updateDisabledIntegrations(
+                                            disabledIntegrations.includes(slug)
+                                              ? disabledIntegrations
+                                              : [...disabledIntegrations, slug]
+                                          );
+                                          toast({
+                                            title: `${name} disconnected`,
+                                            description: `This agent will not use ${name}.`,
+                                          });
+                                        }}
+                                        className="ml-0.5 w-4 h-4 rounded-full hover:bg-emerald-500/30 inline-flex items-center justify-center transition-colors"
+                                        data-testid={`button-remove-integration-${slug}`}
+                                        aria-label={`Remove ${name} integration`}
+                                      >
+                                        <X className="w-2.5 h-2.5" />
+                                      </button>
+                                    </span>
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
@@ -2791,7 +2840,25 @@ export default function Build() {
             </div>
           </motion.section>
           
-          <div className="flex justify-end pt-8 border-t border-white/10">
+          <div className="flex items-center justify-between gap-4 pt-8 border-t border-white/10">
+            <label className="flex items-center gap-3 cursor-pointer select-none" data-testid="label-disable-webex">
+              <input
+                type="checkbox"
+                checked={disabledIntegrations.includes("webex")}
+                onChange={(e) => {
+                  updateDisabledIntegrations(
+                    e.target.checked
+                      ? (disabledIntegrations.includes("webex") ? disabledIntegrations : [...disabledIntegrations, "webex"])
+                      : disabledIntegrations.filter(s => s !== "webex")
+                  );
+                }}
+                className="w-4 h-4 rounded border-white/20 bg-background/60 accent-cyan-400"
+                data-testid="checkbox-disable-webex"
+              />
+              <span className="text-sm text-muted-foreground">
+                Remove Webex integration <span className="text-muted-foreground/60">(no Webex messages, rooms, or send-message tool)</span>
+              </span>
+            </label>
              <Button 
               size="lg" 
               className="px-8 h-12 text-base font-medium bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-black shadow-lg shadow-cyan-500/20"
