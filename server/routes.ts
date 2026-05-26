@@ -1458,6 +1458,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const rulesText = rulesMatch ? rulesMatch[1].trim() : "";
 
       let webexDisabled = false;
+      let kbContent = "";
       if (data.agentId) {
         const agent = await storage.getAgent(data.agentId);
         if (agent?.disabledIntegrations?.includes("webex")) {
@@ -1465,8 +1466,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         }
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
-          const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
-          enrichedSystemPrompt += `\n\n## Knowledge Base:\nUse this information to answer questions accurately:\n\n${kbContent}`;
+          kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
         }
       }
 
@@ -1489,6 +1489,12 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       if (webexRooms.length > 0) {
         const roomsList = webexRooms.map((r: { title: string }) => `- ${r.title}`).join("\n");
         enrichedSystemPrompt += `\n\n## Available Webex Rooms:\n${roomsList}`;
+      }
+
+      // Place agent-specific Knowledge Base AFTER global Webex context so it has
+      // higher recency for the LLM and takes precedence as the primary source of truth.
+      if (kbContent) {
+        enrichedSystemPrompt += `\n\n## 📚 PRIMARY KNOWLEDGE BASE (AUTHORITATIVE SOURCE)\nThis is YOUR primary source of truth for answering questions. Always prefer this knowledge over any other context above. If the answer is in this knowledge base, use it verbatim. Do NOT fabricate information that contradicts this source.\n\n${kbContent}`;
       }
 
       // Reinforce mandatory rules at the very end so they are the LAST instructions the LLM sees
