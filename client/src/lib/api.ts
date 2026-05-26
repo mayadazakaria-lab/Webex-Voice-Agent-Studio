@@ -221,7 +221,7 @@ export const knowledgeBaseApi = {
     return res.json();
   },
 
-  addUrl: async (agentId: number, url: string): Promise<KnowledgeBaseItem> => {
+  addUrl: async (agentId: number, url: string): Promise<KnowledgeBaseItem & { warning?: string }> => {
     const res = await fetch(`${API_BASE}/knowledge-base/url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -570,15 +570,34 @@ export default function Build() {
     return n.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   };
 
-  // Update disabledIntegrations locally and persist to backend if the agent already exists
+  // Update disabledIntegrations locally and persist to backend if the agent already exists.
+  // Serialize requests so rapid clicks always converge on the latest intent (no race).
+  const disabledIntegrationsPersist = useRef<{ inFlight: boolean; pending: string[] | null }>({ inFlight: false, pending: null });
   const updateDisabledIntegrations = (next: string[]) => {
     setDisabledIntegrations(next);
     const id = savedAgentId ?? (urlAgentId ? Number(urlAgentId) : null);
-    if (id) {
-      agentsApi.update(id, { disabledIntegrations: next }).catch(() => {
-        // non-fatal: local state still reflects user intent; backend will sync on Create/Save
-      });
+    if (!id) return;
+    const state = disabledIntegrationsPersist.current;
+    if (state.inFlight) {
+      state.pending = next;
+      return;
     }
+    const run = async (value: string[]) => {
+      state.inFlight = true;
+      try {
+        await agentsApi.update(id, { disabledIntegrations: value });
+      } catch {
+        // non-fatal: local state still reflects user intent; backend will sync on Create/Save
+      } finally {
+        state.inFlight = false;
+        if (state.pending !== null) {
+          const next2 = state.pending;
+          state.pending = null;
+          run(next2);
+        }
+      }
+    };
+    run(next);
   };
 
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
@@ -1991,11 +2010,15 @@ export default function Build() {
                                 setKbLoading(true);
                                 try {
                                   const agentId = await ensureAgentSaved();
-                                  await knowledgeBaseApi.addUrl(agentId, newKbUrl);
+                                  const result = await knowledgeBaseApi.addUrl(agentId, newKbUrl);
                                   refetchKbItems();
                                   setShowAddUrl(false);
                                   setNewKbUrl("");
-                                  toast({ title: "URL added", description: "Page content was fetched and saved." });
+                                  if (result.warning) {
+                                    toast({ title: "URL added with limited content", description: result.warning, variant: "destructive" });
+                                  } else {
+                                    toast({ title: "URL added", description: `Page content saved (${(result.content?.length || 0).toLocaleString()} characters).` });
+                                  }
                                 } catch (err: any) {
                                   toast({ title: "Failed to add URL", description: err.message, variant: "destructive" });
                                 } finally {
@@ -2840,25 +2863,58 @@ export default function Build() {
             </div>
           </motion.section>
           
-          <div className="flex items-center justify-between gap-4 pt-8 border-t border-white/10">
-            <label className="flex items-center gap-3 cursor-pointer select-none" data-testid="label-disable-webex">
-              <input
-                type="checkbox"
-                checked={disabledIntegrations.includes("webex")}
-                onChange={(e) => {
-                  updateDisabledIntegrations(
-                    e.target.checked
-                      ? (disabledIntegrations.includes("webex") ? disabledIntegrations : [...disabledIntegrations, "webex"])
-                      : disabledIntegrations.filter(s => s !== "webex")
-                  );
-                }}
-                className="w-4 h-4 rounded border-white/20 bg-background/60 accent-cyan-400"
-                data-testid="checkbox-disable-webex"
-              />
-              <span className="text-sm text-muted-foreground">
-                Remove Webex integration <span className="text-muted-foreground/60">(no Webex messages, rooms, or send-message tool)</span>
-              </span>
-            </label>
+          <div className="flex items-start justify-between gap-4 pt-8 border-t border-white/10 flex-wrap">
+            {(() => {
+              const activeIntegrations: { id: string; name: string }[] = [];
+              if (webexStats?.hasToken) activeIntegrations.push({ id: "webex", name: "Webex Messaging" });
+              AVAILABLE_INTEGRATIONS
+                .filter(i => i.id !== "webex" && connectedIntegrations.has(i.id))
+                .forEach(i => activeIntegrations.push({ id: i.id, name: i.name }));
+              customIntegrations.forEach((i: any) => {
+                const slug = integrationNameToId(i.name);
+                activeIntegrations.push({ id: slug, name: i.name });
+              });
+              const enabled = activeIntegrations.filter(i => !disabledIntegrations.includes(i.id));
+
+              if (activeIntegrations.length === 0) {
+                return <div className="text-xs text-muted-foreground/60">No integrations connected for this agent yet.</div>;
+              }
+              return (
+                <div className="flex flex-col gap-2 max-w-xl" data-testid="container-active-integrations">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground/70">
+                    Integrations used by this agent
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {enabled.length === 0 && (
+                      <span className="text-xs text-muted-foreground/60">All integrations removed — agent will run with knowledge base only.</span>
+                    )}
+                    {enabled.map(({ id, name }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => updateDisabledIntegrations([...disabledIntegrations, id])}
+                        className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/5 hover:bg-red-500/10 hover:border-red-400/40 transition-colors text-xs text-cyan-100"
+                        data-testid={`chip-integration-${id}`}
+                        title={`Remove ${name} from this agent`}
+                      >
+                        <span>{name}</span>
+                        <X className="w-3 h-3 opacity-60 group-hover:opacity-100 group-hover:text-red-300" />
+                      </button>
+                    ))}
+                    {disabledIntegrations.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => updateDisabledIntegrations([])}
+                        className="text-xs text-muted-foreground/70 hover:text-cyan-300 underline underline-offset-2 px-2 py-1"
+                        data-testid="button-restore-integrations"
+                      >
+                        Restore all
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
              <Button 
               size="lg" 
               className="px-8 h-12 text-base font-medium bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-black shadow-lg shadow-cyan-500/20"

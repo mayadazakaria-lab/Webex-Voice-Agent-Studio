@@ -353,10 +353,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const html = await response.text();
-      const text = html
+      const stripped = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "");
+
+      // Prefer <main>, <article>, or role="main" content when present to skip nav/header chrome
+      const mainMatch =
+        stripped.match(/<main[\s\S]*?>([\s\S]*?)<\/main>/i) ||
+        stripped.match(/<article[\s\S]*?>([\s\S]*?)<\/article>/i) ||
+        stripped.match(/<[a-z]+[^>]*role=["']main["'][^>]*>([\s\S]*?)<\/[a-z]+>/i);
+      const source = mainMatch ? mainMatch[1] : stripped;
+      const text = source
         .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
         .replace(/\s{2,}/g, " ")
         .trim()
         .slice(0, 50000);
@@ -364,8 +374,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
       const title = titleMatch ? titleMatch[1].trim() : new URL(url).hostname;
 
+      // Detect single-page-application shells: very short body or known SPA markers
+      const looksLikeSpa =
+        /<div[^>]+id=["'](root|app|__next|__nuxt)["']/i.test(html) ||
+        /window\.__(NEXT|NUXT|INITIAL)_/i.test(html);
+      let warning: string | undefined;
+      if (looksLikeSpa) {
+        warning = `This page appears to be a JavaScript-rendered app, so a simple fetch only captures ${text.length.toLocaleString()} characters of static markup — the real content is loaded by the browser at runtime. For best results, copy the relevant text into a "Text" knowledge source instead.`;
+      } else if (text.length < 500) {
+        warning = `Only ${text.length} characters of text were extracted from this page. Consider adding the content as a "Text" source if the agent needs more detail.`;
+      }
+
       const item = await storage.createKnowledgeBaseItem({ agentId, type: "url", title, content: text, sourceUrl: url });
-      res.json(item);
+      res.json({ ...item, warning });
     } catch (error: any) {
       if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
       res.status(500).json({ error: error.message || "Failed to fetch URL" });
