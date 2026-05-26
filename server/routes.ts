@@ -1296,9 +1296,17 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       }
 
       const data = chatRequestSchema.parse(req.body);
-      
-      const webexMessages = await storage.getAllWebexMessages(100);
-      const webexRooms = await storage.getAllWebexRooms();
+
+      let webexDisabled = false;
+      if (data.agentId) {
+        const agent = await storage.getAgent(data.agentId);
+        if (agent?.disabledIntegrations?.includes("webex")) {
+          webexDisabled = true;
+        }
+      }
+
+      const webexMessages = webexDisabled ? [] : await storage.getAllWebexMessages(100);
+      const webexRooms = webexDisabled ? [] : await storage.getAllWebexRooms();
       
       let contextMessages = "";
       if (webexMessages.length > 0) {
@@ -1355,7 +1363,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         content: data.message,
       });
       
-      const hasWebex = !!process.env.WEBEX_ACCESS_TOKEN && webexRooms.length > 0;
+      const hasWebex = !webexDisabled && !!process.env.WEBEX_ACCESS_TOKEN && webexRooms.length > 0;
       const bankingFunctionNames = ["lookup_customer", "send_verification_code", "verify_code"];
       const allTools = [
         ...bankingAuthTools,
@@ -1449,7 +1457,12 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const rulesMatch = enrichedSystemPrompt.match(/#\s*Rules\s*\n([\s\S]*?)(?:\n#\s|\s*$)/i);
       const rulesText = rulesMatch ? rulesMatch[1].trim() : "";
 
+      let webexDisabled = false;
       if (data.agentId) {
+        const agent = await storage.getAgent(data.agentId);
+        if (agent?.disabledIntegrations?.includes("webex")) {
+          webexDisabled = true;
+        }
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
           const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
@@ -1457,8 +1470,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         }
       }
 
-      const webexMessages = await storage.getAllWebexMessages(100);
-      const webexRooms = await storage.getAllWebexRooms();
+      const webexMessages = webexDisabled ? [] : await storage.getAllWebexMessages(100);
+      const webexRooms = webexDisabled ? [] : await storage.getAllWebexRooms();
 
       if (webexMessages.length > 0) {
         const contextMessages = webexMessages

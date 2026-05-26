@@ -25,6 +25,7 @@ export const agents = pgTable("agents", {
   voiceModel: text("voice_model").notNull(),
   language: text("language").notNull(),
   gender: text("gender").notNull(),
+  disabledIntegrations: text("disabled_integrations").array().notNull().default(sql`ARRAY[]::text[]`),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
