@@ -1570,6 +1570,112 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     res.json({ configured: !!process.env.ANAM_API_KEY });
   });
 
+  // ── 360 Feedback: generate a structured summary from an interview transcript ──
+  app.post("/api/feedback/summary", async (req, res) => {
+    try {
+      const openai = getOpenAIClient();
+      if (!openai) return res.status(503).json({ error: "OpenAI is not configured. Please add your OpenAI API key." });
+
+      const schema = z.object({
+        agentId: z.number(),
+        transcript: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string().min(1),
+        })).min(1),
+        subjectName: z.string().optional(),
+        reviewerName: z.string().optional(),
+      });
+      const { agentId, transcript, subjectName, reviewerName } = schema.parse(req.body);
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const conversation = transcript
+        .map(m => `${m.role === "assistant" ? "Interviewer" : "Reviewer"}: ${m.content}`)
+        .join("\n");
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are an HR analyst that turns a 360-degree performance feedback interview transcript into a clear, structured written summary for a performance review.
+
+The transcript is a conversation between an Interviewer (the AI facilitator) and a Reviewer (a colleague giving feedback about an employee).
+
+Produce a professional, balanced, and objective summary. Base everything ONLY on what the reviewer actually said — do NOT invent feedback, ratings, or examples that were not mentioned. If a section was not covered in the conversation, write "Not discussed."
+
+Return the summary as plain text (no markdown symbols like # or *) using these clearly labeled sections, each on its own line followed by the content:
+
+EMPLOYEE REVIEWED: <name or "Not specified">
+REVIEWER RELATIONSHIP: <e.g. peer, manager, direct report, or "Not specified">
+
+OVERALL IMPRESSION:
+<2-3 sentence synthesis>
+
+KEY STRENGTHS:
+- <bullet>
+- <bullet>
+
+AREAS FOR IMPROVEMENT:
+- <bullet>
+- <bullet>
+
+SPECIFIC EXAMPLES MENTIONED:
+- <bullet, paraphrasing concrete situations the reviewer described>
+
+COMPETENCY NOTES:
+Collaboration & Teamwork: <short note or "Not discussed">
+Communication: <short note or "Not discussed">
+Leadership & Initiative: <short note or "Not discussed">
+Job/Technical Skills: <short note or "Not discussed">
+Reliability & Accountability: <short note or "Not discussed">
+
+RECOMMENDED NEXT STEPS:
+- <actionable bullet grounded in the feedback>`,
+          },
+          {
+            role: "user",
+            content: `Employee being reviewed (if known): ${subjectName || "unknown"}\nReviewer (if known): ${reviewerName || "unknown"}\n\nInterview transcript:\n\n${conversation}`,
+          },
+        ],
+        max_tokens: 1200,
+      });
+
+      const summary = completion.choices[0].message.content?.trim() || "";
+      if (!summary) return res.status(500).json({ error: "Summary generation returned empty result." });
+
+      const transcriptText = transcript
+        .map(m => `${m.role === "assistant" ? "Interviewer" : "Reviewer"}: ${m.content}`)
+        .join("\n");
+
+      const saved = await storage.createFeedbackSession({
+        agentId,
+        subjectName: subjectName || null,
+        reviewerName: reviewerName || null,
+        transcript: transcriptText,
+        summary,
+      });
+
+      res.json(saved);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
+      console.error("Feedback summary error:", error);
+      res.status(500).json({ error: error.message || "Failed to generate feedback summary" });
+    }
+  });
+
+  app.get("/api/feedback/agent/:agentId", async (req, res) => {
+    try {
+      const agentId = parseInt(req.params.agentId);
+      if (isNaN(agentId)) return res.status(400).json({ error: "Invalid agent ID" });
+      const sessions = await storage.getFeedbackSessionsByAgent(agentId);
+      res.json(sessions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch feedback sessions" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

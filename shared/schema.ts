@@ -105,3 +105,21 @@ export const insertKnowledgeBaseItemSchema = createInsertSchema(knowledgeBaseIte
 
 export type InsertKnowledgeBaseItem = z.infer<typeof insertKnowledgeBaseItemSchema>;
 export type KnowledgeBaseItem = typeof knowledgeBaseItems.$inferSelect;
+
+export const feedbackSessions = pgTable("feedback_sessions", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull().references(() => agents.id),
+  subjectName: text("subject_name"),
+  reviewerName: text("reviewer_name"),
+  transcript: text("transcript").notNull(),
+  summary: text("summary").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertFeedbackSessionSchema = createInsertSchema(feedbackSessions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertFeedbackSession = z.infer<typeof insertFeedbackSessionSchema>;
+export type FeedbackSession = typeof feedbackSessions.$inferSelect;

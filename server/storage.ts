@@ -15,12 +15,15 @@ import {
   type InsertWebexMessage,
   type KnowledgeBaseItem,
   type InsertKnowledgeBaseItem,
+  type FeedbackSession,
+  type InsertFeedbackSession,
   users,
   agents,
   evaluations,
   webexRooms,
   webexMessages,
   knowledgeBaseItems,
+  feedbackSessions,
 } from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
@@ -54,6 +57,10 @@ export interface IStorage {
   getKnowledgeBaseItemsByAgent(agentId: number): Promise<KnowledgeBaseItem[]>;
   updateKnowledgeBaseItem(id: number, title: string, content: string): Promise<KnowledgeBaseItem | null>;
   deleteKnowledgeBaseItem(id: number): Promise<boolean>;
+
+  createFeedbackSession(session: InsertFeedbackSession): Promise<FeedbackSession>;
+  getFeedbackSessionsByAgent(agentId: number): Promise<FeedbackSession[]>;
+  getFeedbackSession(id: number): Promise<FeedbackSession | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -98,6 +105,7 @@ export class DatabaseStorage implements IStorage {
   async deleteAgent(id: number): Promise<boolean> {
     await db.delete(evaluations).where(eq(evaluations.agentId, id));
     await db.delete(knowledgeBaseItems).where(eq(knowledgeBaseItems.agentId, id));
+    await db.delete(feedbackSessions).where(eq(feedbackSessions.agentId, id));
     const result = await db.delete(agents).where(eq(agents.id, id)).returning();
     return result.length > 0;
   }
@@ -195,6 +203,24 @@ export class DatabaseStorage implements IStorage {
   async deleteKnowledgeBaseItem(id: number): Promise<boolean> {
     const result = await db.delete(knowledgeBaseItems).where(eq(knowledgeBaseItems.id, id)).returning();
     return result.length > 0;
+  }
+
+  async createFeedbackSession(session: InsertFeedbackSession): Promise<FeedbackSession> {
+    const [result] = await db.insert(feedbackSessions).values(session).returning();
+    return result;
+  }
+
+  async getFeedbackSessionsByAgent(agentId: number): Promise<FeedbackSession[]> {
+    return await db
+      .select()
+      .from(feedbackSessions)
+      .where(eq(feedbackSessions.agentId, agentId))
+      .orderBy(desc(feedbackSessions.createdAt));
+  }
+
+  async getFeedbackSession(id: number): Promise<FeedbackSession | undefined> {
+    const [result] = await db.select().from(feedbackSessions).where(eq(feedbackSessions.id, id));
+    return result;
   }
 }
 

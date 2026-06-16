@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight, ClipboardList, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, feedbackApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 
@@ -96,6 +96,12 @@ export default function Evaluate() {
 
   const [bankBalance, setBankBalance] = useState(2450.00);
   const [lastDeposit, setLastDeposit] = useState<{ amount: number; newBalance: number } | null>(null);
+
+  // 360 feedback summary
+  const [feedbackSubject, setFeedbackSubject] = useState("");
+  const [feedbackReviewer, setFeedbackReviewer] = useState("");
+  const [feedbackSummary, setFeedbackSummary] = useState<string | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const openOcrCamera = useCallback(async () => {
     setOcrOpen(true);
@@ -837,6 +843,42 @@ export default function Evaluate() {
     });
   };
 
+  const handleGenerateFeedbackSummary = async () => {
+    if (!agentId) return;
+    const transcript = chatMessagesRef.current.length ? chatMessagesRef.current : chatMessages;
+    if (transcript.length === 0) {
+      toast({ title: "No conversation yet", description: "Conduct the interview first, then generate a summary.", variant: "destructive" });
+      return;
+    }
+    setFeedbackLoading(true);
+    try {
+      const result = await feedbackApi.generateSummary({
+        agentId,
+        transcript,
+        subjectName: feedbackSubject.trim() || undefined,
+        reviewerName: feedbackReviewer.trim() || undefined,
+      });
+      setFeedbackSummary(result.summary);
+      toast({ title: "Summary generated", description: "The 360 feedback summary is ready below." });
+    } catch (err: any) {
+      toast({ title: "Failed to generate summary", description: err.message, variant: "destructive" });
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const handleDownloadSummary = () => {
+    if (!feedbackSummary) return;
+    const header = `360 FEEDBACK SUMMARY\n${feedbackSubject ? `Employee: ${feedbackSubject}\n` : ""}${feedbackReviewer ? `Reviewer: ${feedbackReviewer}\n` : ""}Generated: ${new Date().toLocaleString()}\n\n`;
+    const blob = new Blob([header + feedbackSummary], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `360-feedback-${(feedbackSubject || "summary").toLowerCase().replace(/\s+/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     if (!agentId) {
       setLocation("/");
@@ -1020,7 +1062,7 @@ export default function Evaluate() {
                    <div className="space-y-2 flex-1">
                       <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
                       <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-base leading-relaxed">
-                         Hi! I'm {agent.name}. Ask me anything and I'll use your Webex messages as context to provide relevant responses.
+                         Hi! I'm {agent.name}. Start the avatar or send a message to begin — I'll use this agent's knowledge and configuration to help.
                       </div>
                    </div>
                 </div>
@@ -1187,6 +1229,84 @@ export default function Evaluate() {
         </div>
 
         <div className="lg:col-span-5 bg-background p-8 overflow-y-auto border-l border-white/5">
+
+           <div className="mb-8" data-testid="panel-feedback-summary">
+              <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-primary/5 to-cyan-400/5 p-5">
+                 <div className="flex items-center gap-2 mb-1">
+                    <div className="h-8 w-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center">
+                       <ClipboardList className="w-4 h-4 text-primary" />
+                    </div>
+                    <h2 className="text-lg font-display font-semibold">360 Feedback Summary</h2>
+                 </div>
+                 <p className="text-sm text-muted-foreground mb-4">
+                    After the interview, capture the conversation and generate a structured performance-review summary.
+                 </p>
+
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <div className="space-y-1">
+                       <Label className="text-xs text-muted-foreground">Employee reviewed <span className="opacity-50">(optional)</span></Label>
+                       <input
+                          className="w-full bg-background border border-white/10 rounded-lg p-2 text-sm focus:ring-1 focus:ring-primary focus:border-primary"
+                          placeholder="e.g. Jordan Lee"
+                          value={feedbackSubject}
+                          onChange={(e) => setFeedbackSubject(e.target.value)}
+                          data-testid="input-feedback-subject"
+                       />
+                    </div>
+                    <div className="space-y-1">
+                       <Label className="text-xs text-muted-foreground">Reviewer <span className="opacity-50">(optional)</span></Label>
+                       <input
+                          className="w-full bg-background border border-white/10 rounded-lg p-2 text-sm focus:ring-1 focus:ring-primary focus:border-primary"
+                          placeholder="e.g. Sam Patel"
+                          value={feedbackReviewer}
+                          onChange={(e) => setFeedbackReviewer(e.target.value)}
+                          data-testid="input-feedback-reviewer"
+                       />
+                    </div>
+                 </div>
+
+                 <div className="flex items-center gap-2">
+                    <Button
+                       size="sm"
+                       className="bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
+                       onClick={handleGenerateFeedbackSummary}
+                       disabled={feedbackLoading || chatMessages.length === 0}
+                       data-testid="button-generate-summary"
+                    >
+                       {feedbackLoading ? (
+                          <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</>
+                       ) : (
+                          <><FileText className="w-4 h-4 mr-2" /> Generate Summary</>
+                       )}
+                    </Button>
+                    {feedbackSummary && (
+                       <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-white/10 bg-white/5 hover:bg-white/10"
+                          onClick={handleDownloadSummary}
+                          data-testid="button-download-summary"
+                       >
+                          <Download className="w-4 h-4 mr-2" /> Download
+                       </Button>
+                    )}
+                    {chatMessages.length > 0 && (
+                       <span className="text-xs text-muted-foreground" data-testid="text-transcript-count">
+                          {chatMessages.length} messages captured
+                       </span>
+                    )}
+                 </div>
+
+                 {feedbackSummary && (
+                    <div
+                       className="mt-4 p-4 rounded-xl bg-background/60 border border-white/10 max-h-80 overflow-y-auto"
+                       data-testid="text-feedback-summary"
+                    >
+                       <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground/90">{feedbackSummary}</pre>
+                    </div>
+                 )}
+              </div>
+           </div>
 
            <div className="mb-8">
               <div

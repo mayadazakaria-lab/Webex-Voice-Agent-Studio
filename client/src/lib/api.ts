@@ -313,6 +313,42 @@ export const anamApi = {
   },
 };
 
+export interface FeedbackSession {
+  id: number;
+  agentId: number;
+  subjectName: string | null;
+  reviewerName: string | null;
+  transcript: string;
+  summary: string;
+  createdAt: string;
+}
+
+export const feedbackApi = {
+  generateSummary: async (data: {
+    agentId: number;
+    transcript: ChatMessage[];
+    subjectName?: string;
+    reviewerName?: string;
+  }): Promise<FeedbackSession> => {
+    const res = await fetch(`${API_BASE}/feedback/summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to generate feedback summary");
+    }
+    return res.json();
+  },
+
+  getByAgent: async (agentId: number): Promise<FeedbackSession[]> => {
+    const res = await fetch(`${API_BASE}/feedback/agent/${agentId}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+};
+
 export const ocrApi = {
   extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
     const res = await fetch(`${API_BASE}/ocr`, {
