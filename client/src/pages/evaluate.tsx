@@ -1470,16 +1470,6 @@ export default function Evaluate() {
                 </>
               )}
 
-              <div className="pt-6">
-                 <Card className="bg-white/5 border-white/10 p-4">
-                    <h3 className="font-medium mb-2 text-sm">AI Analysis</h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                       The agent demonstrates high clarity but slightly monotonic intonation in this sample. 
-                       Consider increasing the temperature parameter for more variability.
-                    </p>
-                 </Card>
-              </div>
-
            </div>
         </div>
 
