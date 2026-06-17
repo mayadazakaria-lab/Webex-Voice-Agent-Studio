@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil } from "lucide-react";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil, Rocket } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { agentsApi } from "@/lib/api";
@@ -288,6 +288,16 @@ export default function Home() {
                         >
                           <Mic className="w-4 h-4" />
                           Chat
+                        </Button>
+                      </Link>
+                      <Link href={`/launch?agentId=${agent.id}`}>
+                        <Button 
+                          size="sm"
+                          className="gap-2 bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
+                          data-testid={`button-launch-agent-${agent.id}`}
+                        >
+                          <Rocket className="w-4 h-4" />
+                          Launch
                         </Button>
                       </Link>
                       <Button 

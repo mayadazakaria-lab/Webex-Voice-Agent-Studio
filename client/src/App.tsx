@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/home";
 import Build from "@/pages/build";
 import Evaluate from "@/pages/evaluate";
+import Launch from "@/pages/launch";
 
 function Router() {
   return (
@@ -14,6 +15,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/build" component={Build} />
       <Route path="/evaluate" component={Evaluate} />
+      <Route path="/launch" component={Launch} />
       <Route component={NotFound} />
     </Switch>
   );
