@@ -6,3 +6,9 @@ id = "HtQcLveCd2qAKqm72FPXW"
 uri = "file://attached_assets/generated_audio/music_cinematic_teaser_bed.mp3"
 type = "audio"
 title = "cinematic teaser bed"
+
+[[outputs]]
+id = "8BQO20Isseb_yPi1MmHUO"
+uri = "file://attached_assets/final/webex_voice_agent_teaser.mp4"
+type = "video"
+title = "Webex Voice Agent Studio — Cinematic Teaser (28s)"
