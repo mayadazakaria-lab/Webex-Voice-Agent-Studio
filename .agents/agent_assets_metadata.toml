@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "HtQcLveCd2qAKqm72FPXW"
+uri = "file://attached_assets/generated_audio/music_cinematic_teaser_bed.mp3"
+type = "audio"
+title = "cinematic teaser bed"
