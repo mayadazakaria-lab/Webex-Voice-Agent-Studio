@@ -349,6 +349,37 @@ export const feedbackApi = {
   },
 };
 
+export interface InterviewLink {
+  id: number;
+  token: string;
+  agentId: number;
+  createdAt: string;
+}
+
+export const interviewLinksApi = {
+  create: async (agentId: number): Promise<InterviewLink> => {
+    const res = await fetch(`${API_BASE}/interview-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || "Failed to create interview link");
+    }
+    return res.json();
+  },
+
+  resolve: async (token: string): Promise<{ token: string; agent: Agent }> => {
+    const res = await fetch(`${API_BASE}/interview-links/${token}`);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || "Interview link not found");
+    }
+    return res.json();
+  },
+};
+
 export const ocrApi = {
   extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
     const res = await fetch(`${API_BASE}/ocr`, {

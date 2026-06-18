@@ -1676,6 +1676,33 @@ RECOMMENDED NEXT STEPS:
     }
   });
 
+  // Create a new shareable public interview link for an agent
+  app.post("/api/interview-links", async (req, res) => {
+    try {
+      const agentId = parseInt(req.body?.agentId);
+      if (isNaN(agentId)) return res.status(400).json({ error: "Invalid agent ID" });
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+      const link = await storage.createInterviewLink(agentId);
+      res.status(201).json(link);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create interview link" });
+    }
+  });
+
+  // Resolve a public interview link token to its agent
+  app.get("/api/interview-links/:token", async (req, res) => {
+    try {
+      const link = await storage.getInterviewLinkByToken(req.params.token);
+      if (!link) return res.status(404).json({ error: "Interview link not found" });
+      const agent = await storage.getAgent(link.agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+      res.json({ token: link.token, agent });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to resolve interview link" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

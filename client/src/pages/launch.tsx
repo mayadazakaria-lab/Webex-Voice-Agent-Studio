@@ -1,23 +1,36 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Link, useSearch } from "wouter";
+import { Link, useSearch, useParams } from "wouter";
 import { ArrowLeft, Video, VideoOff, User, Loader2, FileText, Download, CheckCircle2, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { agentsApi, anamApi, feedbackApi, type ChatMessage } from "@/lib/api";
+import { agentsApi, anamApi, feedbackApi, interviewLinksApi, type ChatMessage } from "@/lib/api";
 
 export default function Launch() {
   const { toast } = useToast();
   const search = useSearch();
-  const agentId = Number(new URLSearchParams(search).get("agentId")) || undefined;
+  const params = useParams();
+  const token = params.token as string | undefined;
+  const queryAgentId = Number(new URLSearchParams(search).get("agentId")) || undefined;
 
-  const { data: agent, isLoading: agentLoading } = useQuery({
-    queryKey: ["agent", agentId],
-    queryFn: () => agentsApi.getById(agentId as number),
-    enabled: !!agentId,
+  // When opened via a public link, resolve the token to its agent.
+  const { data: linkData, isLoading: linkLoading, isError: linkError } = useQuery({
+    queryKey: ["interview-link", token],
+    queryFn: () => interviewLinksApi.resolve(token as string),
+    enabled: !!token,
   });
+
+  const { data: queryAgent, isLoading: queryAgentLoading } = useQuery({
+    queryKey: ["agent", queryAgentId],
+    queryFn: () => agentsApi.getById(queryAgentId as number),
+    enabled: !!queryAgentId && !token,
+  });
+
+  const agent = token ? linkData?.agent : queryAgent;
+  const agentId = agent?.id;
+  const agentLoading = token ? linkLoading : queryAgentLoading;
 
   const [avatarStreaming, setAvatarStreaming] = useState(false);
   const [avatarLoading, setAvatarLoading] = useState(false);
@@ -185,19 +198,21 @@ export default function Launch() {
     URL.revokeObjectURL(url);
   };
 
-  if (!agentId) {
+  if (agentLoading) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center gap-4">
-        <p className="text-muted-foreground">No agent selected.</p>
-        <Link href="/"><Button variant="outline" data-testid="link-home">Back to Home</Button></Link>
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  if (agentLoading || !agent) {
+  if ((token && linkError) || !agent) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="text-muted-foreground" data-testid="text-invalid-link">
+          {token ? "This interview link is invalid or has expired." : "No agent selected."}
+        </p>
+        <Link href="/"><Button variant="outline" data-testid="link-home">Back to Home</Button></Link>
       </div>
     );
   }

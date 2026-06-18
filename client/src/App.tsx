@@ -16,6 +16,7 @@ function Router() {
       <Route path="/build" component={Build} />
       <Route path="/evaluate" component={Evaluate} />
       <Route path="/launch" component={Launch} />
+      <Route path="/interview/:token" component={Launch} />
       <Route component={NotFound} />
     </Switch>
   );

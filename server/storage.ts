@@ -17,6 +17,8 @@ import {
   type InsertKnowledgeBaseItem,
   type FeedbackSession,
   type InsertFeedbackSession,
+  type InterviewLink,
+  type InsertInterviewLink,
   users,
   agents,
   evaluations,
@@ -24,7 +26,9 @@ import {
   webexMessages,
   knowledgeBaseItems,
   feedbackSessions,
+  interviewLinks,
 } from "@shared/schema";
+import { randomUUID } from "crypto";
 
 neonConfig.webSocketConstructor = ws;
 
@@ -61,6 +65,9 @@ export interface IStorage {
   createFeedbackSession(session: InsertFeedbackSession): Promise<FeedbackSession>;
   getFeedbackSessionsByAgent(agentId: number): Promise<FeedbackSession[]>;
   getFeedbackSession(id: number): Promise<FeedbackSession | undefined>;
+
+  createInterviewLink(agentId: number): Promise<InterviewLink>;
+  getInterviewLinkByToken(token: string): Promise<InterviewLink | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -220,6 +227,20 @@ export class DatabaseStorage implements IStorage {
 
   async getFeedbackSession(id: number): Promise<FeedbackSession | undefined> {
     const [result] = await db.select().from(feedbackSessions).where(eq(feedbackSessions.id, id));
+    return result;
+  }
+
+  async createInterviewLink(agentId: number): Promise<InterviewLink> {
+    const token = randomUUID().replace(/-/g, "");
+    const [result] = await db
+      .insert(interviewLinks)
+      .values({ agentId, token })
+      .returning();
+    return result;
+  }
+
+  async getInterviewLinkByToken(token: string): Promise<InterviewLink | undefined> {
+    const [result] = await db.select().from(interviewLinks).where(eq(interviewLinks.token, token));
     return result;
   }
 }

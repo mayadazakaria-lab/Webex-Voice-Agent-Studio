@@ -1,9 +1,9 @@
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil, Rocket } from "lucide-react";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil, Rocket, Copy, Check, ExternalLink, Loader2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { agentsApi } from "@/lib/api";
+import { agentsApi, interviewLinksApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -60,6 +60,50 @@ export default function Home() {
     language: "",
     gender: "",
   });
+
+  const [shareAgent, setShareAgent] = useState<Agent | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const createLinkMutation = useMutation({
+    mutationFn: (agentId: number) => interviewLinksApi.create(agentId),
+    onSuccess: (link) => {
+      setShareUrl(`${window.location.origin}/interview/${link.token}`);
+      setCopied(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Could not create link",
+        description: error.message,
+        variant: "destructive",
+      });
+      setShareAgent(null);
+    },
+  });
+
+  const handleLaunchClick = (agent: Agent) => {
+    setShareAgent(agent);
+    setShareUrl(null);
+    setCopied(false);
+    createLinkMutation.mutate(agent.id);
+  };
+
+  const handleCopyLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = shareUrl;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    toast({ title: "Link copied", description: "Share it with your interviewer." });
+    setTimeout(() => setCopied(false), 2000);
+  };
   
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -290,16 +334,20 @@ export default function Home() {
                           Chat
                         </Button>
                       </Link>
-                      <Link href={`/launch?agentId=${agent.id}`}>
-                        <Button 
-                          size="sm"
-                          className="gap-2 bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
-                          data-testid={`button-launch-agent-${agent.id}`}
-                        >
+                      <Button 
+                        size="sm"
+                        className="gap-2 bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
+                        onClick={() => handleLaunchClick(agent)}
+                        disabled={createLinkMutation.isPending && shareAgent?.id === agent.id}
+                        data-testid={`button-launch-agent-${agent.id}`}
+                      >
+                        {createLinkMutation.isPending && shareAgent?.id === agent.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
                           <Rocket className="w-4 h-4" />
-                          Launch
-                        </Button>
-                      </Link>
+                        )}
+                        Launch
+                      </Button>
                       <Button 
                         variant="ghost" 
                         size="sm"
@@ -435,6 +483,64 @@ export default function Home() {
               data-testid="button-save-edit"
             >
               {updateAgentMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!shareAgent} onOpenChange={(open) => { if (!open) { setShareAgent(null); setShareUrl(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle data-testid="text-share-title">
+              Share interview link{shareAgent ? ` — ${shareAgent.name}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Send this link to whoever will be conducting the interview. Anyone with the link can open the interview page.
+            </p>
+            {createLinkMutation.isPending || !shareUrl ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4" data-testid="status-link-loading">
+                <Loader2 className="w-4 h-4 animate-spin" /> Generating a new link...
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Input
+                  readOnly
+                  value={shareUrl}
+                  className="font-mono text-xs"
+                  onFocus={(e) => e.target.select()}
+                  data-testid="input-share-url"
+                />
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={handleCopyLink}
+                  data-testid="button-copy-link"
+                  title="Copy link"
+                >
+                  {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            {shareUrl && (
+              <a href={shareUrl} target="_blank" rel="noopener noreferrer" className="inline-flex">
+                <Button variant="outline" className="gap-2" data-testid="link-open-interview">
+                  <ExternalLink className="w-4 h-4" /> Open
+                </Button>
+              </a>
+            )}
+            <Button
+              className="gap-2 bg-gradient-to-r from-primary to-cyan-400 text-black font-medium hover:opacity-90"
+              onClick={handleCopyLink}
+              disabled={!shareUrl}
+              data-testid="button-copy-link-main"
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copied ? "Copied" : "Copy link"}
             </Button>
           </DialogFooter>
         </DialogContent>

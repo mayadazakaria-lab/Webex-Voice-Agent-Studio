@@ -123,3 +123,19 @@ export const insertFeedbackSessionSchema = createInsertSchema(feedbackSessions).
 
 export type InsertFeedbackSession = z.infer<typeof insertFeedbackSessionSchema>;
 export type FeedbackSession = typeof feedbackSessions.$inferSelect;
+
+export const interviewLinks = pgTable("interview_links", {
+  id: serial("id").primaryKey(),
+  token: varchar("token").notNull().unique(),
+  agentId: integer("agent_id").notNull().references(() => agents.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertInterviewLinkSchema = createInsertSchema(interviewLinks).omit({
+  id: true,
+  token: true,
+  createdAt: true,
+});
+
+export type InsertInterviewLink = z.infer<typeof insertInterviewLinkSchema>;
+export type InterviewLink = typeof interviewLinks.$inferSelect;
