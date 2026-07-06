@@ -27,6 +27,7 @@ import {
   knowledgeBaseItems,
   feedbackSessions,
   interviewLinks,
+  appSettings,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -68,6 +69,9 @@ export interface IStorage {
 
   createInterviewLink(agentId: number): Promise<InterviewLink>;
   getInterviewLinkByToken(token: string): Promise<InterviewLink | undefined>;
+
+  getSetting(key: string): Promise<string | undefined>;
+  setSetting(key: string, value: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -243,6 +247,18 @@ export class DatabaseStorage implements IStorage {
   async getInterviewLinkByToken(token: string): Promise<InterviewLink | undefined> {
     const [result] = await db.select().from(interviewLinks).where(eq(interviewLinks.token, token));
     return result;
+  }
+
+  async getSetting(key: string): Promise<string | undefined> {
+    const [result] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    return result?.value;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await db
+      .insert(appSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value } });
   }
 }
 

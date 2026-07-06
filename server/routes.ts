@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
+import { insertAgentSchema, insertEvaluationSchema, type Agent } from "@shared/schema";
+import twilio from "twilio";
 import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -110,6 +111,100 @@ const ttsRequestSchema = z.object({
   voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]),
   model: z.enum(["tts-1", "tts-1-hd"]).default("tts-1"),
 });
+
+// ============ Phone (Twilio Voice) helpers ============
+
+const PHONE_AGENT_KEY = "phone_agent_id";
+
+type PhoneTurn = { role: "user" | "assistant"; content: string };
+interface PhoneCallState {
+  agentId: number;
+  from: string;
+  history: PhoneTurn[];
+  finalized: boolean;
+  lastActivity: number;
+}
+const phoneCalls = new Map<string, PhoneCallState>();
+const PHONE_CALL_TTL_MS = 30 * 60 * 1000;
+const PHONE_CALL_MAX = 200;
+
+function prunePhoneCalls() {
+  const now = Date.now();
+  const entries = Array.from(phoneCalls.entries());
+  for (const [sid, state] of entries) {
+    if (now - state.lastActivity > PHONE_CALL_TTL_MS) phoneCalls.delete(sid);
+  }
+  if (phoneCalls.size > PHONE_CALL_MAX) {
+    const sorted = Array.from(phoneCalls.entries()).sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+    for (const [sid] of sorted) {
+      if (phoneCalls.size <= PHONE_CALL_MAX) break;
+      phoneCalls.delete(sid);
+    }
+  }
+}
+
+// Trusted public base URL from the platform environment (never from request headers)
+function getPublicBaseUrl(): string | null {
+  const domain =
+    (process.env.REPLIT_DOMAINS || "").split(",")[0].trim() ||
+    (process.env.REPLIT_DEV_DOMAIN || "").trim();
+  return domain ? `https://${domain}` : null;
+}
+
+function getTwilioVoiceConfig() {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const auth = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_PHONE_NUMBER;
+  if (!sid || !auth || !from) return null;
+  return { sid, auth, from };
+}
+
+function validateTwilioSignature(req: any): boolean {
+  const auth = process.env.TWILIO_AUTH_TOKEN;
+  if (!auth) return false;
+  const signature = req.header("X-Twilio-Signature") || "";
+  const proto = (req.header("x-forwarded-proto") || req.protocol || "https").split(",")[0].trim();
+  const url = `${proto}://${req.get("host")}${req.originalUrl}`;
+  return twilio.validateRequest(auth, signature, url, req.body || {});
+}
+
+function phoneSayVoice(agent: Agent): string {
+  return agent.gender === "male" ? "Polly.Matthew-Neural" : "Polly.Joanna-Neural";
+}
+
+const PHONE_LANGUAGE_MAP: Record<string, string> = {
+  English: "en-US",
+  Spanish: "es-ES",
+  French: "fr-FR",
+  German: "de-DE",
+  Japanese: "ja-JP",
+  Chinese: "zh-CN",
+};
+
+function phoneLanguage(agent: Agent): string {
+  const lang = agent.language || "en-US";
+  return PHONE_LANGUAGE_MAP[lang] || (lang.includes("-") ? lang : "en-US");
+}
+
+async function buildPhoneSystemPrompt(agent: Agent): Promise<string> {
+  const base = agent.systemPrompt || `You are ${agent.name}, a helpful AI assistant.`;
+  let kbSection = "";
+  const kbItems = await storage.getKnowledgeBaseItemsByAgent(agent.id);
+  if (kbItems.length > 0) {
+    const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
+    kbSection = `\n\n## Knowledge Base:\nUse this information to answer questions accurately:\n\n${kbContent}`;
+  }
+  const phoneRules = `\n\n## Phone Call Rules:\nYou are speaking with a caller on a live phone call. Keep every reply short (1 to 3 sentences), warm, and conversational so it is easy to follow when heard aloud. Never use markdown, bullet points, or special characters. Ask at most one question at a time.`;
+  return base + kbSection + phoneRules;
+}
+
+async function getPhoneAgent(): Promise<Agent | null> {
+  const idStr = await storage.getSetting(PHONE_AGENT_KEY);
+  const id = idStr ? parseInt(idStr) : NaN;
+  if (isNaN(id)) return null;
+  const agent = await storage.getAgent(id);
+  return agent || null;
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
@@ -1700,6 +1795,212 @@ RECOMMENDED NEXT STEPS:
       res.json({ token: link.token, agent });
     } catch (error) {
       res.status(500).json({ error: "Failed to resolve interview link" });
+    }
+  });
+
+  // ============ Phone (Twilio Voice) routes ============
+
+  // Current phone setup: number + assigned agent
+  app.get("/api/phone/config", async (_req, res) => {
+    try {
+      const cfg = getTwilioVoiceConfig();
+      const agent = await getPhoneAgent();
+      res.json({
+        configured: !!cfg,
+        phoneNumber: cfg?.from || null,
+        agentId: agent?.id ?? null,
+        agentName: agent?.name ?? null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to load phone configuration" });
+    }
+  });
+
+  // Assign an agent to the phone number and point the Twilio webhook at this app
+  app.post("/api/phone/agent", async (req, res) => {
+    try {
+      const cfg = getTwilioVoiceConfig();
+      if (!cfg) {
+        return res.status(503).json({ error: "Twilio is not configured. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER." });
+      }
+
+      const schema = z.object({ agentId: z.number().int().positive() });
+      const { agentId } = schema.parse(req.body);
+
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const baseUrl = getPublicBaseUrl();
+      if (!baseUrl) {
+        return res.status(500).json({ error: "Could not determine this app's public URL for the Twilio webhook." });
+      }
+      const voiceUrl = `${baseUrl}/api/twilio/voice`;
+      const statusCallback = `${baseUrl}/api/twilio/status`;
+
+      const client = twilio(cfg.sid, cfg.auth);
+      const numbers = await client.incomingPhoneNumbers.list({ phoneNumber: cfg.from, limit: 1 });
+      if (numbers.length === 0) {
+        return res.status(404).json({ error: `Phone number ${cfg.from} was not found in your Twilio account.` });
+      }
+      await client.incomingPhoneNumbers(numbers[0].sid).update({
+        voiceUrl,
+        voiceMethod: "POST",
+        statusCallback,
+        statusCallbackMethod: "POST",
+      });
+
+      await storage.setSetting(PHONE_AGENT_KEY, String(agentId));
+
+      res.json({ success: true, phoneNumber: cfg.from, agentId, agentName: agent.name });
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
+      console.error("Phone agent assignment error:", error);
+      res.status(500).json({ error: error.message || "Failed to assign agent to phone number" });
+    }
+  });
+
+  // Twilio webhook: incoming call
+  app.post("/api/twilio/voice", async (req, res) => {
+    try {
+      if (!validateTwilioSignature(req)) return res.status(403).send("Invalid Twilio signature");
+
+      const twiml = new twilio.twiml.VoiceResponse();
+      const agent = await getPhoneAgent();
+
+      if (!agent) {
+        twiml.say("Sorry, no agent is assigned to this phone number yet. Goodbye.");
+        twiml.hangup();
+        return res.type("text/xml").send(twiml.toString());
+      }
+
+      prunePhoneCalls();
+      const callSid = req.body.CallSid as string;
+      const greeting = `Hello! This is ${agent.name}. How can I help you today?`;
+      phoneCalls.set(callSid, {
+        agentId: agent.id,
+        from: (req.body.From as string) || "unknown",
+        history: [{ role: "assistant", content: greeting }],
+        finalized: false,
+        lastActivity: Date.now(),
+      });
+
+      const gather = twiml.gather({
+        input: ["speech"],
+        action: "/api/twilio/gather",
+        method: "POST",
+        speechTimeout: "auto",
+        language: phoneLanguage(agent) as any,
+      });
+      gather.say({ voice: phoneSayVoice(agent) as any }, greeting);
+      twiml.say({ voice: phoneSayVoice(agent) as any }, "I didn't hear anything. Goodbye!");
+      twiml.hangup();
+
+      res.type("text/xml").send(twiml.toString());
+    } catch (error) {
+      console.error("Twilio voice webhook error:", error);
+      const twiml = new twilio.twiml.VoiceResponse();
+      twiml.say("Sorry, something went wrong. Please try again later.");
+      twiml.hangup();
+      res.type("text/xml").send(twiml.toString());
+    }
+  });
+
+  // Twilio webhook: caller finished speaking
+  app.post("/api/twilio/gather", async (req, res) => {
+    const twiml = new twilio.twiml.VoiceResponse();
+    try {
+      if (!validateTwilioSignature(req)) return res.status(403).send("Invalid Twilio signature");
+
+      const callSid = req.body.CallSid as string;
+      const speech = ((req.body.SpeechResult as string) || "").trim();
+
+      let state = phoneCalls.get(callSid);
+      if (!state) {
+        const agent = await getPhoneAgent();
+        if (!agent) {
+          twiml.say("Sorry, this call can no longer be handled. Goodbye.");
+          twiml.hangup();
+          return res.type("text/xml").send(twiml.toString());
+        }
+        state = { agentId: agent.id, from: (req.body.From as string) || "unknown", history: [], finalized: false, lastActivity: Date.now() };
+        phoneCalls.set(callSid, state);
+      }
+      state.lastActivity = Date.now();
+
+      const agent = await storage.getAgent(state.agentId);
+      if (!agent) {
+        twiml.say("Sorry, the assigned agent is no longer available. Goodbye.");
+        twiml.hangup();
+        return res.type("text/xml").send(twiml.toString());
+      }
+      const voice = phoneSayVoice(agent) as any;
+      const language = phoneLanguage(agent) as any;
+
+      if (!speech) {
+        const gather = twiml.gather({
+          input: ["speech"],
+          action: "/api/twilio/gather",
+          method: "POST",
+          speechTimeout: "auto",
+          language,
+        });
+        gather.say({ voice }, "Sorry, I didn't catch that. Could you say it again?");
+        twiml.say({ voice }, "I still couldn't hear you. Goodbye!");
+        twiml.hangup();
+        return res.type("text/xml").send(twiml.toString());
+      }
+
+      state.history.push({ role: "user", content: speech });
+
+      const openai = getOpenAIClient();
+      let reply = "Sorry, I'm having trouble thinking right now. Could you repeat that?";
+      if (openai) {
+        const systemPrompt = await buildPhoneSystemPrompt(agent);
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...state.history.slice(-20).map(t => ({ role: t.role, content: t.content } as const)),
+          ],
+          max_tokens: 220,
+        });
+        reply = completion.choices[0]?.message?.content?.trim() || reply;
+      }
+
+      state.history.push({ role: "assistant", content: reply });
+
+      const gather = twiml.gather({
+        input: ["speech"],
+        action: "/api/twilio/gather",
+        method: "POST",
+        speechTimeout: "auto",
+        language,
+      });
+      gather.say({ voice }, reply);
+      twiml.say({ voice }, "Thanks for calling. Goodbye!");
+      twiml.hangup();
+
+      res.type("text/xml").send(twiml.toString());
+    } catch (error) {
+      console.error("Twilio gather webhook error:", error);
+      twiml.say("Sorry, something went wrong. Please call again later.");
+      twiml.hangup();
+      res.type("text/xml").send(twiml.toString());
+    }
+  });
+
+  // Twilio webhook: call status updates (cleanup when the call ends)
+  app.post("/api/twilio/status", async (req, res) => {
+    try {
+      if (!validateTwilioSignature(req)) return res.status(403).send("Invalid Twilio signature");
+      const callSid = req.body.CallSid as string;
+      const callStatus = req.body.CallStatus as string;
+      if (["completed", "failed", "busy", "no-answer", "canceled"].includes(callStatus)) {
+        phoneCalls.delete(callSid);
+      }
+      res.sendStatus(200);
+    } catch (error) {
+      res.sendStatus(200);
     }
   });
 

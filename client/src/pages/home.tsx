@@ -1,9 +1,9 @@
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil, Rocket, Copy, Check, ExternalLink, Loader2 } from "lucide-react";
+import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, Play, User, Globe, Cpu, MessageSquare, Pencil, Rocket, Copy, Check, ExternalLink, Loader2, Phone } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { agentsApi, interviewLinksApi } from "@/lib/api";
+import { agentsApi, interviewLinksApi, phoneApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -108,6 +108,31 @@ export default function Home() {
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: agentsApi.getAll,
+  });
+
+  const { data: phoneConfig } = useQuery({
+    queryKey: ["phone-config"],
+    queryFn: phoneApi.getConfig,
+  });
+
+  const [phoneAgentSelection, setPhoneAgentSelection] = useState<string>("");
+
+  const assignPhoneAgentMutation = useMutation({
+    mutationFn: (agentId: number) => phoneApi.assignAgent(agentId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["phone-config"] });
+      toast({
+        title: "Phone agent updated",
+        description: `${result.agentName} now answers calls to ${result.phoneNumber}.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Could not update phone agent",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const deleteAgentMutation = useMutation({
@@ -252,12 +277,79 @@ export default function Home() {
           </Link>
         </div>
 
+        {agents.length > 0 && phoneConfig?.configured && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.15 }}
+            className="w-full max-w-4xl mt-16"
+          >
+            <Card className="p-6 bg-card/50 backdrop-blur-sm border-white/10" data-testid="card-phone-line">
+              <div className="flex flex-col md:flex-row md:items-center gap-5 md:justify-between">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-green-500/20 to-emerald-400/20 flex items-center justify-center flex-shrink-0">
+                    <Phone className="w-6 h-6 text-green-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-lg">Phone Line</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Call <span className="font-medium text-foreground" data-testid="text-phone-number">{phoneConfig.phoneNumber}</span>
+                      {phoneConfig.agentName ? (
+                        <> to talk to <span className="font-medium text-foreground" data-testid="text-phone-agent">{phoneConfig.agentName}</span></>
+                      ) : (
+                        <> — assign an agent to answer calls</>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <Select
+                    value={phoneAgentSelection || (phoneConfig.agentId ? String(phoneConfig.agentId) : "")}
+                    onValueChange={setPhoneAgentSelection}
+                  >
+                    <SelectTrigger className="w-[220px]" data-testid="select-phone-agent">
+                      <SelectValue placeholder="Choose an agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={String(agent.id)} data-testid={`option-phone-agent-${agent.id}`}>
+                          {agent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    className="gap-2 bg-gradient-to-r from-green-500 to-emerald-400 text-black font-medium hover:opacity-90"
+                    disabled={
+                      assignPhoneAgentMutation.isPending ||
+                      !(phoneAgentSelection || phoneConfig.agentId) ||
+                      Number(phoneAgentSelection || 0) === (phoneConfig.agentId ?? -1)
+                    }
+                    onClick={() => {
+                      const id = Number(phoneAgentSelection || phoneConfig.agentId);
+                      if (id) assignPhoneAgentMutation.mutate(id);
+                    }}
+                    data-testid="button-assign-phone-agent"
+                  >
+                    {assignPhoneAgentMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Phone className="w-4 h-4" />
+                    )}
+                    {phoneConfig.agentId ? "Change Agent" : "Assign Agent"}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+
         {agents.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="w-full max-w-4xl mt-16"
+            className="w-full max-w-4xl mt-8"
           >
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-display font-bold">Your Agents</h2>

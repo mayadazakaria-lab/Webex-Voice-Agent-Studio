@@ -1,0 +1,1 @@
+- [Twilio account has no phone numbers](twilio-account-limits.md) — TWILIO_PHONE_NUMBER is not owned by the account; inbound voice/SMS needs a number purchased in Twilio console first.

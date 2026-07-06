@@ -380,6 +380,37 @@ export const interviewLinksApi = {
   },
 };
 
+export interface PhoneConfig {
+  configured: boolean;
+  phoneNumber: string | null;
+  agentId: number | null;
+  agentName: string | null;
+}
+
+export const phoneApi = {
+  getConfig: async (): Promise<PhoneConfig> => {
+    const res = await fetch(`${API_BASE}/phone/config`);
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || "Failed to load phone configuration");
+    }
+    return res.json();
+  },
+
+  assignAgent: async (agentId: number): Promise<{ success: boolean; phoneNumber: string; agentId: number; agentName: string }> => {
+    const res = await fetch(`${API_BASE}/phone/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || "Failed to assign agent to phone number");
+    }
+    return res.json();
+  },
+};
+
 export const ocrApi = {
   extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
     const res = await fetch(`${API_BASE}/ocr`, {

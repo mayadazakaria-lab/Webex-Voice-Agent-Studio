@@ -139,3 +139,10 @@ export const insertInterviewLinkSchema = createInsertSchema(interviewLinks).omit
 
 export type InsertInterviewLink = z.infer<typeof insertInterviewLinkSchema>;
 export type InterviewLink = typeof interviewLinks.$inferSelect;
+
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
+export type AppSetting = typeof appSettings.$inferSelect;
