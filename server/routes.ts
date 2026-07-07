@@ -1623,6 +1623,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         enrichedSystemPrompt += `\n\n## ⚠️ MANDATORY RULES (NEVER IGNORE)\nThese rules OVERRIDE all other guidance above. You MUST follow every rule strictly. Refuse to proceed if a required step has not been completed.\n\n${rulesText}`;
       }
 
+      console.log(`[anam] session for agent ${data.agentId ?? "none"}: prompt ${enrichedSystemPrompt.length} chars, KB ${kbContent.length} chars, webex msgs ${webexMessages.length}`);
+
       const response = await fetch("https://api.anam.ai/v1/auth/session-token", {
         method: "POST",
         headers: {
