@@ -503,10 +503,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let content = "";
       if (ext === ".pdf") {
-        const { default: pdfParse } = await import("pdf-parse");
+        const { PDFParse } = await import("pdf-parse");
         const dataBuffer = fs.readFileSync(tempFilePath);
-        const pdfData = await pdfParse(dataBuffer);
-        content = pdfData.text.trim().slice(0, 50000);
+        const parser = new PDFParse({ data: new Uint8Array(dataBuffer) });
+        try {
+          const pdfData = await parser.getText();
+          content = pdfData.text.trim().slice(0, 50000);
+        } finally {
+          await parser.destroy().catch(() => {});
+        }
       } else {
         content = fs.readFileSync(tempFilePath, "utf-8").trim().slice(0, 50000);
       }
