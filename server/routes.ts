@@ -1564,18 +1564,25 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   // Users sometimes provide an Anam persona ID instead of an avatar ID.
   // If the ID resolves as a persona, use that persona's underlying avatar ID
   // (so our own enriched system prompt / knowledge base still applies).
-  const anamAvatarIdCache = new Map<string, string>();
-  async function resolveAnamAvatarId(id: string, apiKey: string): Promise<string> {
+  type ResolvedAnamIds = { avatarId: string; voiceId?: string; llmId?: string };
+  const anamAvatarIdCache = new Map<string, ResolvedAnamIds>();
+  async function resolveAnamAvatarId(id: string, apiKey: string): Promise<ResolvedAnamIds> {
     const cached = anamAvatarIdCache.get(id);
     if (cached) return cached;
-    let resolved = id;
+    let resolved: ResolvedAnamIds = { avatarId: id };
     try {
       const r = await fetch(`https://api.anam.ai/v1/personas/${id}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (r.ok) {
         const persona = await r.json();
-        if (persona?.avatar?.id) resolved = persona.avatar.id;
+        if (persona?.avatar?.id) {
+          resolved = {
+            avatarId: persona.avatar.id,
+            voiceId: persona.voice?.id || undefined,
+            llmId: persona.llmId || undefined,
+          };
+        }
       }
     } catch (e) {
       console.error("[anam] persona lookup failed, using id as avatarId:", e);
@@ -1603,14 +1610,14 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
       let webexDisabled = false;
       let kbContent = "";
-      let agentAvatarId: string | undefined;
+      let agentAnam: ResolvedAnamIds | undefined;
       if (data.agentId) {
         const agent = await storage.getAgent(data.agentId);
         if (agent?.disabledIntegrations?.includes("webex")) {
           webexDisabled = true;
         }
         if (agent?.avatarId) {
-          agentAvatarId = await resolveAnamAvatarId(agent.avatarId, apiKey);
+          agentAnam = await resolveAnamAvatarId(agent.avatarId, apiKey);
         }
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
@@ -1663,9 +1670,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
             ? { personaId: data.personaConfig.personaId }
             : {
                 name: data.personaConfig?.name || "Assistant",
-                avatarId: data.personaConfig?.avatarId || agentAvatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
-                voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
-                llmId: data.personaConfig?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
+                avatarId: data.personaConfig?.avatarId || agentAnam?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
+                voiceId: data.personaConfig?.voiceId || agentAnam?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
+                llmId: data.personaConfig?.llmId || agentAnam?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
                 systemPrompt: enrichedSystemPrompt,
               },
         }),
