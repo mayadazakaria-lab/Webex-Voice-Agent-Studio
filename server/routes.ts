@@ -1561,6 +1561,29 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }).optional(),
   });
 
+  // Users sometimes provide an Anam persona ID instead of an avatar ID.
+  // If the ID resolves as a persona, use that persona's underlying avatar ID
+  // (so our own enriched system prompt / knowledge base still applies).
+  const anamAvatarIdCache = new Map<string, string>();
+  async function resolveAnamAvatarId(id: string, apiKey: string): Promise<string> {
+    const cached = anamAvatarIdCache.get(id);
+    if (cached) return cached;
+    let resolved = id;
+    try {
+      const r = await fetch(`https://api.anam.ai/v1/personas/${id}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (r.ok) {
+        const persona = await r.json();
+        if (persona?.avatar?.id) resolved = persona.avatar.id;
+      }
+    } catch (e) {
+      console.error("[anam] persona lookup failed, using id as avatarId:", e);
+    }
+    anamAvatarIdCache.set(id, resolved);
+    return resolved;
+  }
+
   app.post("/api/anam/session-token", async (req, res) => {
     try {
       const apiKey = process.env.ANAM_API_KEY;
@@ -1587,7 +1610,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           webexDisabled = true;
         }
         if (agent?.avatarId) {
-          agentAvatarId = agent.avatarId;
+          agentAvatarId = await resolveAnamAvatarId(agent.avatarId, apiKey);
         }
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
