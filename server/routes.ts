@@ -1591,6 +1591,77 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     return resolved;
   }
 
+  // ── Voice detection settings (tunable for noisy environments, e.g. conference kiosks) ──
+  const VOICE_SETTINGS_KEY = "anam_voice_detection";
+  const voiceSettingsSchema = z.object({
+    // Preset flag surfaced in the UI; custom values below override the preset.
+    noisyEnvironment: z.boolean(),
+    // Noise reduction / voice isolation applied to input audio (0-1).
+    speechEnhancementLevel: z.number().min(0).max(1),
+    // How eager the persona is to start speaking (0 = waits until confident).
+    endOfSpeechSensitivity: z.number().min(0).max(1),
+    // Silence timers (seconds).
+    silenceBeforeSkipTurnSeconds: z.number().min(0).max(900),
+    silenceBeforeSessionEndSeconds: z.number().min(0).max(7200),
+    silenceBeforeAutoEndTurnSeconds: z.number().min(0.5).max(10),
+  });
+  type VoiceSettings = z.infer<typeof voiceSettingsSchema>;
+
+  const QUIET_PRESET: VoiceSettings = {
+    noisyEnvironment: false,
+    speechEnhancementLevel: 0.8,
+    endOfSpeechSensitivity: 0.5,
+    silenceBeforeSkipTurnSeconds: 15,
+    silenceBeforeSessionEndSeconds: 60,
+    silenceBeforeAutoEndTurnSeconds: 5,
+  };
+  // Kiosk-in-a-noisy-hall preset: maximum voice isolation, wait until the
+  // nearby speaker is clearly done, and generous silence timers so a session
+  // doesn't end while an attendee is thinking.
+  const NOISY_PRESET: VoiceSettings = {
+    noisyEnvironment: true,
+    speechEnhancementLevel: 1,
+    endOfSpeechSensitivity: 0.2,
+    silenceBeforeSkipTurnSeconds: 30,
+    silenceBeforeSessionEndSeconds: 180,
+    silenceBeforeAutoEndTurnSeconds: 6,
+  };
+
+  async function getVoiceSettings(): Promise<VoiceSettings> {
+    try {
+      const raw = await storage.getSetting(VOICE_SETTINGS_KEY);
+      if (raw) return voiceSettingsSchema.parse(JSON.parse(raw));
+    } catch (e) {
+      console.error("[anam] invalid stored voice settings, using noisy preset:", e);
+    }
+    // Default to the noisy-environment preset (conference kiosk deployment).
+    return NOISY_PRESET;
+  }
+
+  app.get("/api/anam/voice-settings", async (_req, res) => {
+    res.json(await getVoiceSettings());
+  });
+
+  app.put("/api/anam/voice-settings", async (req, res) => {
+    try {
+      // Allow either full custom values or just { noisyEnvironment } to apply a preset.
+      const body = req.body || {};
+      let settings: VoiceSettings;
+      if (Object.keys(body).length === 1 && typeof body.noisyEnvironment === "boolean") {
+        settings = body.noisyEnvironment ? NOISY_PRESET : QUIET_PRESET;
+      } else {
+        settings = voiceSettingsSchema.parse(body);
+      }
+      await storage.setSetting(VOICE_SETTINGS_KEY, JSON.stringify(settings));
+      res.json(settings);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: "Failed to save voice settings" });
+    }
+  });
+
   app.post("/api/anam/session-token", async (req, res) => {
     try {
       const apiKey = process.env.ANAM_API_KEY;
@@ -1657,7 +1728,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         enrichedSystemPrompt += `\n\n## ⚠️ MANDATORY RULES (NEVER IGNORE)\nThese rules OVERRIDE all other guidance above. You MUST follow every rule strictly. Refuse to proceed if a required step has not been completed.\n\n${rulesText}`;
       }
 
-      console.log(`[anam] session for agent ${data.agentId ?? "none"}: prompt ${enrichedSystemPrompt.length} chars, KB ${kbContent.length} chars, webex msgs ${webexMessages.length}`);
+      const voiceSettings = await getVoiceSettings();
+      console.log(`[anam] session for agent ${data.agentId ?? "none"}: prompt ${enrichedSystemPrompt.length} chars, KB ${kbContent.length} chars, webex msgs ${webexMessages.length}, noisy mode ${voiceSettings.noisyEnvironment}`);
 
       const response = await fetch("https://api.anam.ai/v1/auth/session-token", {
         method: "POST",
@@ -1674,6 +1746,13 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
                 voiceId: data.personaConfig?.voiceId || agentAnam?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
                 llmId: data.personaConfig?.llmId || agentAnam?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
                 systemPrompt: enrichedSystemPrompt,
+                voiceDetectionOptions: {
+                  speechEnhancementLevel: voiceSettings.speechEnhancementLevel,
+                  endOfSpeechSensitivity: voiceSettings.endOfSpeechSensitivity,
+                  silenceBeforeSkipTurnSeconds: voiceSettings.silenceBeforeSkipTurnSeconds,
+                  silenceBeforeSessionEndSeconds: voiceSettings.silenceBeforeSessionEndSeconds,
+                  silenceBeforeAutoEndTurnSeconds: voiceSettings.silenceBeforeAutoEndTurnSeconds,
+                },
               },
         }),
       });

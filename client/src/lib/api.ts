@@ -311,7 +311,35 @@ export const anamApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+
+  getVoiceSettings: async (): Promise<VoiceSettings> => {
+    const res = await fetch(`${API_BASE}/anam/voice-settings`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  setVoiceSettings: async (settings: Partial<VoiceSettings> & { noisyEnvironment: boolean }): Promise<VoiceSettings> => {
+    const res = await fetch(`${API_BASE}/anam/voice-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to save voice settings");
+    }
+    return res.json();
+  },
 };
+
+export interface VoiceSettings {
+  noisyEnvironment: boolean;
+  speechEnhancementLevel: number;
+  endOfSpeechSensitivity: number;
+  silenceBeforeSkipTurnSeconds: number;
+  silenceBeforeSessionEndSeconds: number;
+  silenceBeforeAutoEndTurnSeconds: number;
+}
 
 export interface FeedbackSession {
   id: number;

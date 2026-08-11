@@ -7,6 +7,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { agentsApi, anamApi, feedbackApi, interviewLinksApi, type ChatMessage } from "@/lib/api";
+import { Switch } from "@/components/ui/switch";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export default function Launch() {
   const { toast } = useToast();
@@ -48,6 +50,24 @@ export default function Launch() {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const processedMsgIdsRef = useRef<Set<string>>(new Set());
   const finalizingRef = useRef(false);
+  const micStreamRef = useRef<MediaStream | null>(null);
+
+  const queryClient = useQueryClient();
+  const { data: voiceSettings } = useQuery({
+    queryKey: ["anam-voice-settings"],
+    queryFn: anamApi.getVoiceSettings,
+  });
+  const noisyMutation = useMutation({
+    mutationFn: (noisyEnvironment: boolean) => anamApi.setVoiceSettings({ noisyEnvironment }),
+    onSuccess: (settings) => {
+      queryClient.setQueryData(["anam-voice-settings"], settings);
+      toast({
+        title: settings.noisyEnvironment ? "Noisy environment mode on" : "Noisy environment mode off",
+        description: "Applies to the next session you start.",
+      });
+    },
+    onError: (err: any) => toast({ title: "Could not save setting", description: err.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     chatMessagesRef.current = chatMessages;
@@ -88,11 +108,12 @@ export default function Launch() {
     setChatMessages([]);
     chatMessagesRef.current = [];
 
-    // Defensively tear down any existing client before creating a new one
+    // Defensively tear down any existing client/mic before creating new ones
     if (anamClientRef.current) {
       try { await anamClientRef.current.stopStreaming(); } catch {}
       anamClientRef.current = null;
     }
+    stopMicStream();
 
     try {
       const { sessionToken } = await anamApi.getSessionToken({
@@ -129,22 +150,48 @@ export default function Launch() {
         finalizeInterview();
       });
 
+      // Request the mic with noise suppression, echo cancellation, and auto
+      // gain control — important for kiosk deployments in noisy environments.
+      let micStream: MediaStream | undefined;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            noiseSuppression: true,
+            echoCancellation: true,
+            autoGainControl: true,
+          },
+        });
+        micStreamRef.current = micStream;
+      } catch {
+        // Fall back to the SDK's own mic handling if constraints are rejected.
+        micStream = undefined;
+      }
+
       if (avatarVideoRef.current) {
-        await client.streamToVideoElement(avatarVideoRef.current.id);
+        await client.streamToVideoElement(avatarVideoRef.current.id, micStream);
         setAvatarStreaming(true);
       } else {
         throw new Error("Video element not ready. Please try again.");
       }
     } catch (error: any) {
       console.error("Avatar start error:", error);
+      stopMicStream();
       setAvatarError(error.message || "Failed to start the interview");
     } finally {
       setAvatarLoading(false);
     }
   }, [agent, finalizeInterview, avatarLoading, avatarStreaming]);
 
+  const stopMicStream = () => {
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+  };
+
   const avatarClosedCleanup = () => {
     anamClientRef.current = null;
+    stopMicStream();
     setAvatarStreaming(false);
   };
 
@@ -157,6 +204,7 @@ export default function Launch() {
     } catch (error) {
       console.error("Avatar stop error:", error);
     }
+    stopMicStream();
     setAvatarStreaming(false);
     await finalizeInterview();
   }, [finalizeInterview]);
@@ -166,6 +214,10 @@ export default function Launch() {
       if (anamClientRef.current) {
         try { anamClientRef.current.stopStreaming(); } catch {}
         anamClientRef.current = null;
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
       }
     };
   }, []);
@@ -234,18 +286,29 @@ export default function Launch() {
             <p className="text-xs text-muted-foreground">Live Interview</p>
           </div>
         </div>
-        {avatarStreaming && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-            onClick={endInterview}
-            data-testid="button-end-interview"
-          >
-            <VideoOff className="w-4 h-4" />
-            End Interview
-          </Button>
-        )}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2" title="Maximizes voice isolation and turn-taking patience for loud venues. Applies to the next session.">
+            <span className="text-xs text-muted-foreground">Noisy environment</span>
+            <Switch
+              checked={!!voiceSettings?.noisyEnvironment}
+              disabled={!voiceSettings || noisyMutation.isPending}
+              onCheckedChange={(checked) => noisyMutation.mutate(checked)}
+              data-testid="switch-noisy-environment"
+            />
+          </div>
+          {avatarStreaming && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              onClick={endInterview}
+              data-testid="button-end-interview"
+            >
+              <VideoOff className="w-4 h-4" />
+              End Interview
+            </Button>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 grid lg:grid-cols-2 gap-6 p-6 overflow-hidden">
