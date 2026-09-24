@@ -11,6 +11,7 @@ import * as path from "path";
 import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
+import { timingSafeEqual as cryptoTimingSafeEqual } from "crypto";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -1642,8 +1643,29 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     res.json(await getVoiceSettings());
   });
 
+  // Writes are admin-only: the launch/kiosk page can be shared publicly, so
+  // changing global voice settings requires the shared admin token.
+  function isVoiceSettingsAdmin(req: any): { ok: boolean; status: number; error: string } {
+    const adminToken = process.env.VOICE_SETTINGS_ADMIN_TOKEN;
+    if (!adminToken) {
+      return { ok: false, status: 503, error: "Voice settings admin token is not configured. Set VOICE_SETTINGS_ADMIN_TOKEN to enable changes." };
+    }
+    const provided = String(req.header("x-admin-token") || "");
+    const a = Buffer.from(provided);
+    const b = Buffer.from(adminToken);
+    const match = a.length === b.length && cryptoTimingSafeEqual(a, b);
+    if (!match) {
+      return { ok: false, status: 401, error: "Invalid admin passcode." };
+    }
+    return { ok: true, status: 200, error: "" };
+  }
+
   app.put("/api/anam/voice-settings", async (req, res) => {
     try {
+      const auth = isVoiceSettingsAdmin(req);
+      if (!auth.ok) {
+        return res.status(auth.status).json({ error: auth.error });
+      }
       // Allow either full custom values or just { noisyEnvironment } to apply a preset.
       const body = req.body || {};
       let settings: VoiceSettings;

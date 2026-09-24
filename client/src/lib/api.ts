@@ -318,15 +318,17 @@ export const anamApi = {
     return res.json();
   },
 
-  setVoiceSettings: async (settings: Partial<VoiceSettings> & { noisyEnvironment: boolean }): Promise<VoiceSettings> => {
+  setVoiceSettings: async (settings: Partial<VoiceSettings> & { noisyEnvironment: boolean }, adminToken: string): Promise<VoiceSettings> => {
     const res = await fetch(`${API_BASE}/anam/voice-settings`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-admin-token": adminToken },
       body: JSON.stringify(settings),
     });
     if (!res.ok) {
       const error = await res.json();
-      throw new Error(error.error || "Failed to save voice settings");
+      const err: any = new Error(error.error || "Failed to save voice settings");
+      err.status = res.status;
+      throw err;
     }
     return res.json();
   },

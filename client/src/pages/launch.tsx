@@ -57,8 +57,20 @@ export default function Launch() {
     queryKey: ["anam-voice-settings"],
     queryFn: anamApi.getVoiceSettings,
   });
+  // Voice settings are global, so writes are admin-only. The toggle is hidden
+  // entirely for public interview-link visitors; workspace operators unlock it
+  // with the shared admin passcode (kept for the session only).
+  const ADMIN_TOKEN_STORAGE_KEY = "voice-settings-admin-token";
   const noisyMutation = useMutation({
-    mutationFn: (noisyEnvironment: boolean) => anamApi.setVoiceSettings({ noisyEnvironment }),
+    mutationFn: (noisyEnvironment: boolean) => {
+      let adminToken = sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || "";
+      if (!adminToken) {
+        adminToken = window.prompt("Enter the admin passcode to change voice settings:") || "";
+        if (!adminToken) return Promise.reject(new Error("Admin passcode required."));
+        sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, adminToken);
+      }
+      return anamApi.setVoiceSettings({ noisyEnvironment }, adminToken);
+    },
     onSuccess: (settings) => {
       queryClient.setQueryData(["anam-voice-settings"], settings);
       toast({
@@ -66,7 +78,10 @@ export default function Launch() {
         description: "Applies to the next session you start.",
       });
     },
-    onError: (err: any) => toast({ title: "Could not save setting", description: err.message, variant: "destructive" }),
+    onError: (err: any) => {
+      if (err.status === 401) sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+      toast({ title: "Could not save setting", description: err.message, variant: "destructive" });
+    },
   });
 
   useEffect(() => {
@@ -287,15 +302,17 @@ export default function Launch() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2" title="Maximizes voice isolation and turn-taking patience for loud venues. Applies to the next session.">
-            <span className="text-xs text-muted-foreground">Noisy environment</span>
-            <Switch
-              checked={!!voiceSettings?.noisyEnvironment}
-              disabled={!voiceSettings || noisyMutation.isPending}
-              onCheckedChange={(checked) => noisyMutation.mutate(checked)}
-              data-testid="switch-noisy-environment"
-            />
-          </div>
+          {!token && (
+            <div className="flex items-center gap-2" title="Maximizes voice isolation and turn-taking patience for loud venues. Applies to the next session. Requires the admin passcode.">
+              <span className="text-xs text-muted-foreground">Noisy environment</span>
+              <Switch
+                checked={!!voiceSettings?.noisyEnvironment}
+                disabled={!voiceSettings || noisyMutation.isPending}
+                onCheckedChange={(checked) => noisyMutation.mutate(checked)}
+                data-testid="switch-noisy-environment"
+              />
+            </div>
+          )}
           {avatarStreaming && (
             <Button
               variant="outline"
