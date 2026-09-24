@@ -44,3 +44,7 @@ mockupState = "FULLSTACK"
 [userenv]
 
 [userenv.shared]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 900000
